@@ -17,17 +17,49 @@ function writeJson(key, value) {
   }
 }
 
-function getPlayerToken() {
+function readIdentity(storage) {
   try {
-    const stored = window.localStorage.getItem('threefold-player-token');
-    if (stored && /^[a-zA-Z0-9_-]{16,80}$/.test(stored)) return stored;
-    const token = globalThis.crypto?.randomUUID?.().replaceAll('-', '')
-      || `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
-    window.localStorage.setItem('threefold-player-token', token);
-    return token;
+    const value = storage.getItem('threefold-player-token');
+    return value && /^[a-zA-Z0-9_-]{32,80}$/.test(value) ? value : '';
   } catch {
-    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+    return '';
   }
+}
+
+function readIdentityFrom(storageName) {
+  try {
+    return readIdentity(window[storageName]);
+  } catch {
+    return '';
+  }
+}
+
+function generatePlayerToken() {
+  const secureCrypto = globalThis.crypto;
+  if (!secureCrypto?.getRandomValues) return '';
+  const bytes = new Uint8Array(24);
+  secureCrypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function getPlayerToken() {
+  const fromLocal = readIdentityFrom('localStorage');
+  if (fromLocal) return fromLocal;
+  const fromSession = readIdentityFrom('sessionStorage');
+  if (fromSession) return fromSession;
+
+  const token = globalThis.crypto?.randomUUID?.().replaceAll('-', '') || generatePlayerToken();
+  if (!token) return '';
+  try {
+    window.localStorage.setItem('threefold-player-token', token);
+  } catch {
+    try {
+      window.sessionStorage.setItem('threefold-player-token', token);
+    } catch {
+      // Keep the identity in memory for this tab if storage is blocked.
+    }
+  }
+  return token;
 }
 
 export function getStoredRoom() {
@@ -41,6 +73,7 @@ export function usePrivateRoom() {
 
   const [room, setRoom] = useState(null);
   const [yourMark, setYourMark] = useState(null);
+  const [inviteToken, setInviteToken] = useState('');
   const [connection, setConnection] = useState('idle');
   const [actionPending, setActionPending] = useState(null);
   const [roomError, setRoomError] = useState('');
@@ -54,6 +87,10 @@ export function usePrivateRoom() {
   const connect = useCallback((initialAction) => {
     if (typeof WebSocket === 'undefined') {
       setRoomError('Live rooms need a browser with WebSocket support.');
+      return;
+    }
+    if (!identityRef.current) {
+      setRoomError('This browser could not create the secure identity needed for a private room.');
       return;
     }
 
@@ -78,6 +115,7 @@ export function usePrivateRoom() {
     }
 
     setRoomError('');
+    setInviteToken('');
     setActionPending(initialAction.type === 'create_room' ? 'create' : initialAction.type === 'join_room' ? 'join' : null);
     setConnection('connecting');
 
@@ -120,6 +158,7 @@ export function usePrivateRoom() {
           }
           setRoom(message.room);
           setYourMark(message.yourMark);
+          setInviteToken(typeof message.inviteToken === 'string' ? message.inviteToken : '');
           setActionPending(null);
           setConnection('connected');
           setRoomError('');
@@ -136,6 +175,7 @@ export function usePrivateRoom() {
               memberRef.current = null;
               setRoom(null);
               setYourMark(null);
+              setInviteToken('');
               writeJson('threefold-active-room', null);
             }
           }
@@ -179,8 +219,8 @@ export function usePrivateRoom() {
     connect({ type: 'create_room', name, token: identityRef.current });
   }, [connect]);
 
-  const joinRoom = useCallback((code, name) => {
-    connect({ type: 'join_room', code, name, token: identityRef.current });
+  const joinRoom = useCallback((code, name, inviteToken) => {
+    connect({ type: 'join_room', code, name, inviteToken, token: identityRef.current });
   }, [connect]);
 
   const resumeRoom = useCallback((savedRoom) => {
@@ -211,6 +251,7 @@ export function usePrivateRoom() {
     retryCountRef.current = 0;
     setRoom(null);
     setYourMark(null);
+    setInviteToken('');
     setConnection('idle');
     setActionPending(null);
     setRoomError('');
@@ -228,6 +269,7 @@ export function usePrivateRoom() {
   return {
     room,
     yourMark,
+    inviteToken,
     connection,
     actionPending,
     roomError,

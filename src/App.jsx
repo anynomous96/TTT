@@ -7,7 +7,6 @@ import {
   BadgeCheck,
   Bot,
   Check,
-  CircleHelp,
   Copy,
   DoorOpen,
   Gamepad2,
@@ -46,17 +45,17 @@ const EMPTY_GAME = (startingMark = 'X') => ({
 const MODE_DETAILS = {
   bot: {
     title: 'Perfect opponent',
-    subtitle: 'An impossible-to-beat computer. Draw if you can; one mistake is all it needs.',
+    subtitle: 'A computer that plays every position perfectly.',
     label: 'SOLO MATCH',
   },
   local: {
     title: 'Pass & play',
-    subtitle: 'Two players, one screen. Hand it over when the turn changes.',
+    subtitle: 'Two players, one screen. A shared scorecard for every rematch.',
     label: 'SAME DEVICE',
   },
   private: {
     title: 'Private room',
-    subtitle: 'Invite one person with a private code. No matchmaking, no strangers.',
+    subtitle: 'A secure invite for one person. No matchmaking or public rooms.',
     label: 'PRIVATE MATCH',
   },
 };
@@ -87,22 +86,32 @@ function normalizeCode(value) {
   return typeof value === 'string' ? value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6) : '';
 }
 
-function SiteHeader({ onHome, onRules, room, connection }) {
+function normalizeInviteToken(value) {
+  return typeof value === 'string' ? value.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 22) : '';
+}
+
+function isValidInviteToken(value) {
+  return typeof value === 'string' && /^[a-zA-Z0-9_-]{22}$/.test(value);
+}
+
+function getInviteTokenFromHash(hash) {
+  const rawHash = typeof hash === 'string' ? hash.replace(/^#/, '') : '';
+  return normalizeInviteToken(new URLSearchParams(rawHash).get('invite'));
+}
+
+function SiteHeader({ onHome, room, connection }) {
   return (
     <header className="site-header">
       <button className="brand-button" type="button" onClick={onHome} aria-label="Back to mode selection">
         <span className="brand-glyph" aria-hidden="true"><MarkIcon mark="X" /><MarkIcon mark="O" /></span>
         <span className="brand-word">THREEFOLD<span> / PLAY</span></span>
       </button>
-      <div className="header-actions">
-        {room && (
-          <span className={`room-status ${connection === 'connected' ? 'is-online' : connection === 'reconnecting' || connection === 'connecting' ? 'is-reconnecting' : ''}`}>
-            {connection === 'connected' ? <Wifi size={14} /> : connection === 'reconnecting' || connection === 'connecting' ? <WifiOff size={14} /> : <span className="status-dot" />}
-            {connection === 'connected' ? 'Room live' : connection === 'reconnecting' || connection === 'connecting' ? 'Reconnecting' : 'Room paused'}
-          </span>
-        )}
-        <button className="header-help" type="button" onClick={onRules} aria-label="How to play"><CircleHelp size={16} /><span>How to play</span></button>
-      </div>
+      {room && (
+        <span className={`room-status ${connection === 'connected' ? 'is-online' : connection === 'reconnecting' || connection === 'connecting' ? 'is-reconnecting' : ''}`}>
+          {connection === 'connected' ? <Wifi size={14} /> : connection === 'reconnecting' || connection === 'connecting' ? <WifiOff size={14} /> : <span className="status-dot" />}
+          {connection === 'connected' ? 'Room live' : connection === 'reconnecting' || connection === 'connecting' ? 'Reconnecting' : 'Room paused'}
+        </span>
+      )}
     </header>
   );
 }
@@ -137,12 +146,10 @@ function ModeSelectionPage() {
         <div className="hero-copy">
           <p className="eyebrow"><span className="eyebrow-mark" />THE CLASSIC, WITH A LITTLE MORE LIFE</p>
           <h1>Choose your<br /><em>kind of rivalry.</em></h1>
-          <p className="hero-description">A familiar little game, made for a quick challenge and one more rematch. Pick your opponent and make the first move.</p>
+          <p className="hero-description">A quick challenge, a good rivalry, one more rematch. Choose how you’d like to play.</p>
           <div className="hero-trust-row"><span><ShieldCheck size={15} /> Free to play</span><i /> <span>No sign-up needed</span></div>
         </div>
         <div className="hero-visual" aria-hidden="true">
-          <div className="visual-orbit orbit-one" />
-          <div className="visual-orbit orbit-two" />
           <div className="visual-note"><Sparkles size={15} /> ONE MORE ROUND?</div>
           <div className="mini-board">
             <div><MarkIcon mark="X" /></div><div><MarkIcon mark="O" /></div><div />
@@ -151,7 +158,6 @@ function ModeSelectionPage() {
           </div>
           <span className="visual-caption">X · O · AGAIN</span>
         </div>
-        <div className="hero-index">01 <span>/ 03</span></div>
       </section>
 
       <section className="mode-section">
@@ -161,34 +167,29 @@ function ModeSelectionPage() {
         </div>
         <div className="mode-grid">
           <Link className="mode-card mode-card-bot" to="/setup/bot">
-            <div className="mode-card-top"><span className="mode-icon"><Bot size={20} /></span><span className="mode-number">01</span></div>
+            <div className="mode-card-top"><span className="mode-icon"><Bot size={20} /></span></div>
             <span className="mode-overline">SOLO · PERFECT PLAY</span>
             <h3>Take on the<br />computer.</h3>
             <p>Outsmart the only opponent that never misses a line.</p>
             <span className="mode-card-action">Play solo <ArrowUpRight size={17} /></span>
           </Link>
           <Link className="mode-card mode-card-local" to="/setup/local">
-            <div className="mode-card-top"><span className="mode-icon"><UsersRound size={20} /></span><span className="mode-number">02</span></div>
+            <div className="mode-card-top"><span className="mode-icon"><UsersRound size={20} /></span></div>
             <span className="mode-overline">TWO PLAYERS · ONE SCREEN</span>
             <h3>Pass it<br />around.</h3>
             <p>A little local rivalry. No accounts, no waiting for a turn.</p>
             <span className="mode-card-action">Play together <ArrowUpRight size={17} /></span>
           </Link>
           <Link className="mode-card mode-card-room" to="/room">
-            <div className="mode-card-top"><span className="mode-icon"><MessageCircle size={20} /></span><span className="mode-number">03</span></div>
+            <div className="mode-card-top"><span className="mode-icon"><MessageCircle size={20} /></span></div>
             <span className="mode-overline">ONLINE · INVITE ONLY</span>
             <h3>Meet in a<br />private room.</h3>
-            <p>Share a code, play live, and chat between moves.</p>
+            <p>Share a secure invite, play live, and chat between moves.</p>
             <span className="mode-card-action">Create or join <ArrowUpRight size={17} /></span>
           </Link>
         </div>
       </section>
 
-      <section className="home-footer-note">
-        <span className="tiny-mark"><MarkIcon mark="X" /></span>
-        <p><strong>Simple rules. Good company.</strong><span>Three in a row wins. A full board is a draw.</span></p>
-        <span className="note-right">BUILT FOR THE REMATCH <span>↗</span></span>
-      </section>
     </main>
   );
 }
@@ -209,7 +210,7 @@ function SetupPage({ mode, selectedMark, setSelectedMark, playerOneName, setPlay
 
   return (
     <main className="setup-page page-enter">
-      <PageIntro eyebrow="02 / GET SET" title={isBot ? 'Pick your' : 'Set the'} accent={isBot ? 'side.' : 'players.'} detail={description.subtitle} />
+      <PageIntro eyebrow={isBot ? 'SOLO / SETUP' : 'PASS & PLAY / SETUP'} title={isBot ? 'Pick your' : 'Set the'} accent={isBot ? 'side.' : 'players.'} detail={description.subtitle} />
       <div className="setup-layout">
         <section className="setup-card panel">
           <div className="setup-card-header"><span className="setup-mode-icon">{isBot ? <Bot size={19} /> : <UsersRound size={19} />}</span><div><span className="panel-overline">{description.label}</span><h2>{isBot ? 'How do you want to play?' : 'Who’s on the couch?'}</h2></div></div>
@@ -221,7 +222,7 @@ function SetupPage({ mode, selectedMark, setSelectedMark, playerOneName, setPlay
                 <div className="field-label-row"><label>Choose your mark</label><span>There are no wrong answers.</span></div>
                 <MarkPicker selectedMark={selectedMark} setSelectedMark={setSelectedMark} optionLabels={['X / CROSS', 'O / CIRCLE']} />
               </div>
-              <div className="opening-note"><MarkIcon mark={firstMark} /><span><strong>{opener}</strong><small>On an empty board, X always takes the first turn.</small></span></div>
+              <div className="opening-note"><MarkIcon mark={firstMark} /><span><strong>{opener}</strong></span></div>
             </>
           ) : (
             <>
@@ -242,12 +243,12 @@ function SetupPage({ mode, selectedMark, setSelectedMark, playerOneName, setPlay
         </section>
 
         <aside className={`setup-preview ${isBot ? 'setup-preview-bot' : 'setup-preview-local'}`}>
-          <div className="preview-art"><div className="preview-glow" /><div className="setup-mini-board">
+          <div className="preview-art"><div className="setup-mini-board">
             <div><MarkIcon mark="X" /></div><div /><div><MarkIcon mark="O" /></div>
             <div /><div><MarkIcon mark="X" /></div><div />
             <div><MarkIcon mark="O" /></div><div /><div />
           </div></div>
-          <div className="preview-copy"><span className="panel-overline">A QUICK REMINDER</span><h3>{isBot ? <>You can draw.<br />You can’t win.</> : <>Take turns.<br />Talk a little trash.</>}</h3><p>{isBot ? 'The computer checks every possible line. A perfect game from you ends level.' : 'X goes first. Three marks in a line wins. No squares left? Shake hands.'}</p></div>
+          <div className="preview-copy"><span className="panel-overline">{isBot ? 'PERFECT PLAY' : 'SAME DEVICE'}</span><h3>{isBot ? <>One sharp<br />opponent.</> : <>One screen.<br />Shared score.</>}</h3><p>{isBot ? 'A minimax opponent that never overlooks a winning line.' : 'Player names and match totals stay together on this device.'}</p></div>
           <div className="preview-bottom"><span>THREEFOLD / {isBot ? 'SOLO' : 'LOCAL'}</span><Sparkles size={16} /></div>
         </aside>
       </div>
@@ -267,7 +268,7 @@ function MarkPicker({ selectedMark, setSelectedMark, optionLabels }) {
   );
 }
 
-function RoomEntryPage({ playerName, setPlayerName, joinCode, setJoinCode, createRoom, joinRoom, actionPending, connection, roomError, clearRoomError, hasInvite }) {
+function RoomEntryPage({ playerName, setPlayerName, joinCode, setJoinCode, joinSecret, setJoinSecret, createRoom, joinRoom, actionPending, connection, roomError, clearRoomError, hasInvite }) {
   const [formError, setFormError] = useState('');
   const creating = actionPending === 'create';
   const joining = actionPending === 'join';
@@ -287,22 +288,23 @@ function RoomEntryPage({ playerName, setPlayerName, joinCode, setJoinCode, creat
     const name = playerName.trim().replace(/\s+/g, ' ').slice(0, 18);
     const code = normalizeCode(joinCode);
     if (!name) return setFormError('Add your name before joining.');
-    if (code.length !== 6) return setFormError('Room codes are six characters long.');
+    if (code.length !== 6) return setFormError('Room IDs are six characters long.');
+    if (!isValidInviteToken(joinSecret)) return setFormError('A room ID alone cannot grant access. Enter the 22-character private key or open the secure invite link.');
     setFormError('');
     clearRoomError();
-    joinRoom(code, name);
+    joinRoom(code, name, normalizeInviteToken(joinSecret));
   }
 
   return (
     <main className="room-entry-page page-enter">
-      <PageIntro eyebrow="PRIVATE PLAY / 03" title="Make it a" accent="two-player game." detail="Host a room for a friend or enter the code they sent. Your board appears once you’re in the room." />
+      <PageIntro eyebrow="PRIVATE ROOM / SETUP" title="Make it a" accent="two-player game." detail="Create an invite for a friend, or use the secure invite details they shared with you." />
       <div className="room-entry-layout">
         <section className="room-entry-main panel">
           <div className="room-entry-intro"><span className="setup-mode-icon room-mode-icon"><Link2 size={19} /></span><div><span className="panel-overline">PRIVATE ROOM</span><h2>First, who are you?</h2><p>Choose a name to show in the room and the chat.</p></div></div>
           <label className="field-label" htmlFor="room-player-name">Your name</label>
           <input className="text-input room-name-input" id="room-player-name" value={playerName} maxLength={18} autoComplete="nickname" onChange={(event) => { setPlayerName(event.target.value); setFormError(''); clearRoomError(); }} placeholder="e.g. Alex" />
 
-          {hasInvite && <div className="invite-callout"><Link2 size={15} /><span>Invite code found — enter your name, then join below.</span></div>}
+          {hasInvite && <div className="invite-callout"><Link2 size={15} /><span>Secure invite found. Enter your name to join.</span></div>}
           {(formError || roomError) && <p className="form-alert" role="alert">{formError || roomError}</p>}
 
           <div className="room-actions-grid">
@@ -310,7 +312,7 @@ function RoomEntryPage({ playerName, setPlayerName, joinCode, setJoinCode, creat
               <span className="room-action-icon"><UsersRound size={19} /></span>
               <span className="panel-overline">YOU’RE THE HOST</span>
               <h3>Start a new room.</h3>
-              <p>We’ll make a private six-character code to share.</p>
+              <p>We’ll make a room ID and secure invite link for your friend.</p>
               <button className="primary-button room-create-button" type="submit" disabled={pending}>
                 {creating && <span className="button-spinner" aria-hidden="true" />}
                 <span>{creating ? 'Creating room…' : 'Create room'}</span>
@@ -321,16 +323,18 @@ function RoomEntryPage({ playerName, setPlayerName, joinCode, setJoinCode, creat
             <form className="room-action-card join-room-card" onSubmit={submitJoin}>
               <span className="room-action-icon"><Link2 size={19} /></span>
               <span className="panel-overline">YOUR FRIEND HOSTED</span>
-              <h3>Enter their code.</h3>
-              <p>Six letters or numbers. Room codes are private invites.</p>
-              <label className="field-label code-label" htmlFor="join-room-code">ROOM CODE</label>
+              <h3>Enter their invite.</h3>
+              <p>Use both invite values, or open the secure link your friend sent.</p>
+              <label className="field-label code-label" htmlFor="join-room-code">ROOM ID</label>
+              <input className="text-input room-code-input" id="join-room-code" value={joinCode} onChange={(event) => { setJoinCode(normalizeCode(event.target.value)); setFormError(''); clearRoomError(); }} maxLength={6} autoComplete="off" placeholder="ABC123" aria-label="Six character room ID" />
+              <label className="field-label code-label room-key-label" htmlFor="join-room-key">PRIVATE KEY</label>
               <div className="code-entry-row">
-                <input className="text-input room-code-input" id="join-room-code" value={joinCode} onChange={(event) => { setJoinCode(normalizeCode(event.target.value)); setFormError(''); clearRoomError(); }} maxLength={6} autoComplete="off" placeholder="ABC123" aria-label="Six character room code" />
+                <input className="text-input room-code-input room-invite-key-input" id="join-room-key" value={joinSecret} onChange={(event) => { setJoinSecret(normalizeInviteToken(event.target.value)); setFormError(''); clearRoomError(); }} maxLength={22} autoComplete="off" placeholder="22-character key" aria-label="Private invite key" />
                 <button className="join-submit-button" type="submit" aria-label="Join private room" disabled={pending}>
                   {joining ? <span className="button-spinner" aria-hidden="true" /> : <ArrowRight size={18} />}
                 </button>
               </div>
-              <span className="code-hint">Enter the six-character code from your friend’s invite.</span>
+              <span className="code-hint">The room ID by itself does not grant access.</span>
             </form>
           </div>
           {actionPending && <p className="room-connection-note" role="status"><span className="status-dot status-dot-live" />{joining ? 'Checking the code and joining your friend…' : 'Setting up your room…'}</p>}
@@ -343,7 +347,7 @@ function RoomEntryPage({ playerName, setPlayerName, joinCode, setJoinCode, creat
           <span className="panel-overline">A ROOM FOR TWO</span>
           <h3>Board first.<br />Chat whenever.</h3>
           <p>Join the room, see who has the first move, then keep the banter right beside the board.</p>
-          <div className="room-side-points"><span><Check size={14} /> Live score</span><span><Check size={14} /> Private chat</span><span><Check size={14} /> One invite code</span></div>
+          <div className="room-side-points"><span><Check size={14} /> Live score</span><span><Check size={14} /> Private chat</span><span><Check size={14} /> Secure invite</span></div>
           <div className="side-card-foot">NO ACCOUNT NEEDED <span>✳</span></div>
         </aside>
       </div>
@@ -361,7 +365,9 @@ function GameRoute({ room, connection, roomError, clearRoomError, yourMark, send
       return <RoomReconnectScreen error={roomError} />;
     }
     const code = normalizeCode(new URLSearchParams(location.search).get('room'));
-    return <Navigate to={`/room${code ? `?room=${code}` : ''}`} replace />;
+    const inviteToken = getInviteTokenFromHash(location.hash);
+    const inviteFragment = inviteToken ? `#invite=${encodeURIComponent(inviteToken)}` : '';
+    return <Navigate to={`/room${code ? `?room=${code}` : ''}${inviteFragment}`} replace />;
   }
 
   return (
@@ -391,7 +397,7 @@ function RoomReconnectScreen({ error }) {
   );
 }
 
-function GamePage({ mode, room, connection, roomError, clearRoomError, yourMark, sendRoomMessage, reconnectToRoom, onHome, game, localRound, localStarter, applyLocalMove, startNextLocalRound, resetCurrentGame, selectedMark, playerOneName, playerTwoName, botStats, localStats, autoCompleting, announcement, copied, copyInvite, onClearRecords }) {
+function GamePage({ mode, room, connection, roomError, clearRoomError, yourMark, sendRoomMessage, reconnectToRoom, onHome, game, localRound, localStarter, applyLocalMove, startNextLocalRound, resetCurrentGame, selectedMark, playerOneName, playerTwoName, botStats, localStats, seriesScores, autoCompleting, announcement, copied, inviteToken, copyInvite, onClearRecords }) {
   const [chatDraft, setChatDraft] = useState('');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showChat, setShowChat] = useState(false);
@@ -458,7 +464,6 @@ function GamePage({ mode, room, connection, roomError, clearRoomError, yourMark,
       if (connection === 'reconnecting' || connection === 'connecting') return 'Reconnecting to the room…';
       if (optimisticMove) return 'Sending your move…';
       if (connection !== 'connected') return 'Room connection paused';
-      if (room.status === 'waiting') return 'Room is open · invite one friend to begin';
       if (roundFinished) return winner ? `${playerNameFor(winner)} takes the round` : 'A hard-fought draw';
       return turn === yourMark ? 'Your move' : `${playerNameFor(turn)} is up`;
     }
@@ -473,14 +478,12 @@ function GamePage({ mode, room, connection, roomError, clearRoomError, yourMark,
 
   function firstTurnText() {
     if (!openingTurn) return '';
-    if (remote && room.status === 'waiting') return 'X opens when your friend joins';
     return `${turn} opens · ${playerNameFor(turn)} has the first move`;
   }
 
   function scoreFor(mark) {
     if (remote) return room.scores[mark] || 0;
-    if (mode === 'bot') return mark === selectedMark ? botStats.wins : botStats.losses;
-    return mark === selectedMark ? localStats.player1 : localStats.player2;
+    return seriesScores[mark] || 0;
   }
 
   function handleCellClick(index) {
@@ -525,6 +528,10 @@ function GamePage({ mode, room, connection, roomError, clearRoomError, yourMark,
   const youVoted = remote && votes[yourMark];
   const opponentVoted = remote && votes[opponentMark];
 
+  if (remote && room.status === 'waiting') {
+    return <PrivateWaitingRoom room={room} yourMark={yourMark} inviteToken={inviteToken} connection={connection} roomError={roomError} clearRoomError={clearRoomError} copied={copied} copyInvite={copyInvite} onReconnect={reconnectToRoom} onLeave={onHome} />;
+  }
+
   return (
     <main className="game-page page-enter">
       <p className="visually-hidden" aria-live="polite">{announcement}</p>
@@ -544,12 +551,11 @@ function GamePage({ mode, room, connection, roomError, clearRoomError, yourMark,
 
           <div className="score-row" aria-label="Live scoreboard">
             <ScoreTile mark="X" label={playerNameFor('X')} score={scoreFor('X')} active={!roundFinished && turn === 'X'} />
-            <div className="score-ties"><span>DRAW</span><strong>{remote ? room.scores.draws : mode === 'bot' ? botStats.draws : localStats.draws}</strong></div>
+            <div className="score-ties"><span>DRAW</span><strong>{remote ? room.scores.draws : seriesScores.draws}</strong></div>
             <ScoreTile mark="O" label={playerNameFor('O')} score={scoreFor('O')} active={!roundFinished && turn === 'O'} />
           </div>
 
           {firstTurnText() && <div className="first-turn-note"><span className="first-turn-icon"><Sparkles size={14} /></span><span>{firstTurnText()}</span></div>}
-          {room?.status === 'waiting' && <div className="waiting-banner"><span className="waiting-dot" /><span>Share the code to bring in the second player. The board unlocks when they join.</span></div>}
           {roomError && <p className="game-alert" role="alert">{roomError}<button type="button" onClick={clearRoomError} aria-label="Dismiss message"><X size={15} /></button></p>}
 
           <Board board={displayBoard} winningLine={winningLine} winner={winner} onCellClick={handleCellClick} canPlay={canPlay} nextMark={turn} autoCompleting={autoCompleting} />
@@ -569,7 +575,7 @@ function GamePage({ mode, room, connection, roomError, clearRoomError, yourMark,
               detail={resultDetail}
               scoreX={scoreFor('X')}
               scoreO={scoreFor('O')}
-              drawScore={remote ? room.scores.draws : mode === 'bot' ? botStats.draws : localStats.draws}
+              drawScore={remote ? room.scores.draws : seriesScores.draws}
               playerNameFor={playerNameFor}
               nextStarter={mode === 'local' ? otherMark(localStarter) : 'X'}
               onPlayAgain={() => startNextLocalRound(mode)}
@@ -598,21 +604,26 @@ function GamePage({ mode, room, connection, roomError, clearRoomError, yourMark,
         <aside className="game-sidebar">
           {remote ? (
             <>
-              <RoomCard room={room} yourMark={yourMark} connection={connection} copied={copied} copyInvite={copyInvite} onReconnect={reconnectToRoom} onLeave={onHome} />
+              <RoomCard room={room} yourMark={yourMark} inviteToken={inviteToken} connection={connection} copied={copied} copyInvite={copyInvite} onReconnect={reconnectToRoom} onLeave={onHome} />
               <section className={`chat-panel panel ${showChat ? 'chat-is-open' : ''}`}>
                 <div className="chat-panel-heading">
-                  <div className="chat-opponent-avatar"><MarkIcon mark={opponentMark} /></div>
+                  <div className="chat-opponent-avatar" aria-hidden="true"><span>{nameOfOpponent.trim().slice(0, 1).toUpperCase()}</span></div>
                   <div className="chat-panel-title"><span className="panel-overline">ROOM CHAT</span><strong>{nameOfOpponent}</strong><span className={`chat-status ${room.players[opponentMark]?.online ? 'is-online' : ''}`}><i />{room.players[opponentMark]?.online ? 'Online now' : 'Away'}</span></div>
                   <span className="chat-live-pill"><span />LIVE</span>
                 </div>
-                <div className="chat-mobile-caption"><MessageCircle size={14} /> Little messages between moves</div>
+                <div className={`chat-turn-note ${roundFinished ? 'is-finished' : ''}`} aria-live="polite">
+                  <span>{winner && !draw ? <MarkIcon mark={winner} /> : draw ? <span className="draw-glyph">=</span> : <MarkIcon mark={turn} />}</span>
+                  <strong>{turnText()}</strong>
+                </div>
                 <div className="chat-messages" aria-label="Private room messages" aria-live="polite">
                   {room.messages.length === 0 ? (
                     <div className="chat-empty-state"><span className="chat-empty-emoji">👋</span><strong>Break the ice.</strong><span>Send a hello before the next move.</span></div>
                   ) : room.messages.map((message, index) => {
                     const previous = room.messages[index - 1];
-                    const grouped = previous?.mark === message.mark && Date.now() - new Date(previous.sentAt).getTime() < 5 * 60 * 1000;
-                    return <ChatBubble key={message.id} message={message} mine={message.mark === yourMark} grouped={grouped} />;
+                    const next = room.messages[index + 1];
+                    const grouped = chatMessagesAreGrouped(previous, message);
+                    const endsGroup = !chatMessagesAreGrouped(message, next);
+                    return <ChatBubble key={message.id} message={message} mine={message.mark === yourMark} grouped={grouped} showAvatar={message.mark !== yourMark && endsGroup} />;
                   })}
                   <div ref={chatEndRef} />
                 </div>
@@ -626,7 +637,7 @@ function GamePage({ mode, room, connection, roomError, clearRoomError, yourMark,
                   <button type="submit" aria-label="Send message" disabled={!chatDraft.trim() || connection !== 'connected'}><Send size={17} /></button>
                 </form>
                 {roomError && <p className="chat-error" role="alert"><span>{roomError}</span><button type="button" onClick={clearRoomError} aria-label="Dismiss message"><X size={14} /></button></p>}
-                <p className="chat-encryption-note"><ShieldCheck size={13} />Only players with this room code can see chat.</p>
+                <p className="chat-visibility-note"><ShieldCheck size={13} />Visible to the two players in this room.</p>
               </section>
             </>
           ) : (
@@ -725,11 +736,32 @@ function VoteStatus({ mark, name, voted }) {
   );
 }
 
-function RoomCard({ room, yourMark, connection, copied, copyInvite, onReconnect, onLeave }) {
+function PrivateWaitingRoom({ room, yourMark, inviteToken, connection, roomError, clearRoomError, copied, copyInvite, onReconnect, onLeave }) {
   return (
-    <section className="room-card panel">
-      <div className="room-card-top"><span className="panel-overline">ROOM / {room.code}</span><span className={`room-live-dot ${connection === 'connected' ? 'is-online' : ''}`} /></div>
-      <div className="room-code-share"><div><span>INVITE CODE</span><strong>{room.code}</strong></div><button type="button" onClick={copyInvite} className="copy-invite-button"><span>{copied ? 'Copied' : 'Copy invite'}</span>{copied ? <Check size={15} /> : <Copy size={15} />}</button></div>
+    <main className="game-page private-waiting-page page-enter">
+      <div className="game-page-heading">
+        <button className="back-link" type="button" onClick={onLeave}><ArrowLeft size={16} />Leave room</button>
+        <div className="game-page-title"><span className="eyebrow"><span className="eyebrow-mark" />PRIVATE ROOM</span><h1>Waiting for your friend.</h1></div>
+      </div>
+      <section className="waiting-room-intro panel">
+        <span className="waiting-room-symbol"><MarkIcon mark="X" /></span>
+        <div><span className="panel-overline">ROOM READY · INVITE ONLY</span><h2>Share the secure invite.</h2><p>The board and room chat unlock after the second player joins.</p></div>
+      </section>
+      <RoomCard room={room} yourMark={yourMark} inviteToken={inviteToken} connection={connection} copied={copied} copyInvite={copyInvite} onReconnect={onReconnect} onLeave={onLeave} waiting />
+      <div className="waiting-turn-cue"><MarkIcon mark="X" /><span><strong>X opens</strong><small>The first move appears after your friend joins.</small></span></div>
+      {roomError && <p className="game-alert waiting-room-alert" role="alert"><span>{roomError}</span><button type="button" onClick={clearRoomError} aria-label="Dismiss message"><X size={15} /></button></p>}
+    </main>
+  );
+}
+
+function RoomCard({ room, yourMark, inviteToken, connection, copied, copyInvite, onReconnect, onLeave, waiting = false }) {
+  return (
+    <section className={`room-card panel ${waiting ? 'waiting-room-card' : ''}`}>
+      {waiting && <div className="waiting-card-heading"><span className="waiting-dot" /><span>Waiting for the second player</span></div>}
+      <div className="room-card-top"><span className="panel-overline">PRIVATE INVITE</span><span className={`room-live-dot ${connection === 'connected' ? 'is-online' : ''}`} /></div>
+      <div className="room-code-share"><div><span>ROOM ID</span><strong>{room.code}</strong></div><button type="button" onClick={copyInvite} className="copy-invite-button" disabled={!inviteToken}><span>{copied ? 'Copied' : 'Copy secure invite'}</span>{copied ? <Check size={15} /> : <Copy size={15} />}</button></div>
+      <div className="room-invite-key"><span>PRIVATE KEY</span><code>{inviteToken || 'Creating secure invite…'}</code></div>
+      <p className="room-private-hint">The room ID alone cannot be used to join. Share the secure invite link or both values.</p>
       <div className="room-roster">
         {['X', 'O'].map((mark) => {
           const player = room.players[mark];
@@ -741,10 +773,17 @@ function RoomCard({ room, yourMark, connection, copied, copyInvite, onReconnect,
   );
 }
 
-function ChatBubble({ message, mine, grouped }) {
+function chatMessagesAreGrouped(previous, current) {
+  if (!previous || !current || previous.mark !== current.mark) return false;
+  const previousTime = Date.parse(previous.sentAt);
+  const currentTime = Date.parse(current.sentAt);
+  return Number.isFinite(previousTime) && Number.isFinite(currentTime) && Math.abs(currentTime - previousTime) < 5 * 60 * 1000;
+}
+
+function ChatBubble({ message, mine, grouped, showAvatar }) {
   return (
     <div className={`chat-message-row ${mine ? 'is-mine' : 'is-theirs'} ${grouped ? 'is-grouped' : ''}`}>
-      {!mine && <span className="chat-avatar-small">{!grouped && <MarkIcon mark={message.mark} />}</span>}
+      {!mine && <span className={`chat-avatar-small ${showAvatar ? 'is-visible' : ''}`} aria-hidden="true">{showAvatar && (message.name?.trim().slice(0, 1).toUpperCase() || '?')}</span>}
       <div className="chat-message-stack">
         {!grouped && <div className="chat-message-byline"><strong>{mine ? 'You' : message.name}</strong><time dateTime={message.sentAt}>{new Date(message.sentAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time></div>}
         <p className="chat-bubble">{message.text}</p>
@@ -756,8 +795,8 @@ function ChatBubble({ message, mine, grouped }) {
 function LocalMatchCard({ mode, selectedMark, playerOneName, playerTwoName, botStats, localStats, totalGames, onClearRecords }) {
   return (
     <section className="stats-card panel">
-      <div className="stats-card-heading"><span className="panel-overline">YOUR SCORECARD</span><span className="local-only-pill">THIS DEVICE</span></div>
-      <h2>{mode === 'bot' ? 'Staying sharp.' : 'The rivalry so far.'}</h2>
+      <div className="stats-card-heading"><span className="panel-overline">ALL-TIME RECORD</span><span className="local-only-pill">THIS DEVICE</span></div>
+      <h2>{mode === 'bot' ? 'Against perfect play.' : 'The rivalry so far.'}</h2>
       {mode === 'bot' ? (
         <>
           <div className="stats-columns"><div><strong>{botStats.wins}</strong><span>WON</span></div><div><strong>{botStats.draws}</strong><span>DREW</span></div><div><strong>{botStats.losses}</strong><span>LOST</span></div></div>
@@ -794,31 +833,12 @@ function ConfirmDialog({ title, detail, confirmLabel, onCancel, onConfirm }) {
   );
 }
 
-function RulesDialog({ onClose }) {
-  useEffect(() => {
-    const onKeyDown = (event) => { if (event.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
-  return (
-    <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="confirm-dialog rules-dialog" role="dialog" aria-modal="true" aria-labelledby="rules-title">
-        <button className="dialog-close" type="button" onClick={onClose} aria-label="Close"><X size={17} /></button>
-        <span className="confirm-icon"><Gamepad2 size={20} /></span><p className="panel-overline">THREE QUICK RULES</p><h2 id="rules-title">Easy to learn. Always one more.</h2>
-        <div className="rules-steps"><p><span>01</span>Take turns placing a mark in an empty square.</p><p><span>02</span>Line up three across, down, or diagonally to win.</p><p><span>03</span>A full board with no line is a draw.</p></div>
-        <p className="rules-perfect-note"><Bot size={16} />The computer plays perfectly. A draw is the best result against it.</p>
-        <button type="button" className="primary-button rules-done" onClick={onClose}>Got it <Check size={16} /></button>
-      </section>
-    </div>
-  );
-}
-
 function GameExperience() {
   const navigate = useNavigate();
   const location = useLocation();
   const roomActions = usePrivateRoom();
   const {
-    room, yourMark, connection, actionPending, roomError, createRoom, joinRoom,
+    room, yourMark, inviteToken, connection, actionPending, roomError, createRoom, joinRoom,
     resumeRoom, send, leaveRoom, clearRoomError,
   } = roomActions;
 
@@ -827,13 +847,14 @@ function GameExperience() {
   const [playerTwoName, setPlayerTwoName] = useState(() => readString('threefold-p2-name', 'Player 2'));
   const [playerName, setPlayerName] = useState(() => readString('threefold-player-name', ''));
   const [joinCode, setJoinCode] = useState(() => normalizeCode(new URLSearchParams(window.location.search).get('room')));
+  const [joinSecret, setJoinSecret] = useState(() => getInviteTokenFromHash(window.location.hash));
   const [game, setGame] = useState(() => EMPTY_GAME());
+  const [seriesScores, setSeriesScores] = useState(() => ({ X: 0, O: 0, draws: 0 }));
   const [localRound, setLocalRound] = useState(1);
   const [localStarter, setLocalStarter] = useState('X');
   const [autoCompleting, setAutoCompleting] = useState(false);
   const [announcement, setAnnouncement] = useState('');
   const [copied, setCopied] = useState(false);
-  const [showRules, setShowRules] = useState(false);
   const [showClearRecords, setShowClearRecords] = useState(false);
   const [botStats, setBotStats] = useState(() => {
     const stats = readValue('threefold-bot-stats', {}) || {};
@@ -856,16 +877,18 @@ function GameExperience() {
   useEffect(() => writeValue('threefold-local-stats', localStats), [localStats]);
 
   const queryCode = normalizeCode(new URLSearchParams(location.search).get('room'));
+  const queryInviteToken = getInviteTokenFromHash(location.hash);
 
   useEffect(() => {
     if (queryCode) setJoinCode(queryCode);
-  }, [queryCode]);
+    setJoinSecret(queryInviteToken);
+  }, [queryCode, queryInviteToken]);
 
   useEffect(() => {
-    if (room || !queryCode || savedRoomOnLoad?.code !== queryCode || connection !== 'idle' || resumedCodeRef.current === queryCode) return;
+    if (room || !queryCode || isValidInviteToken(queryInviteToken) || savedRoomOnLoad?.code !== queryCode || connection !== 'idle' || resumedCodeRef.current === queryCode) return;
     resumedCodeRef.current = queryCode;
     resumeRoom(savedRoomOnLoad);
-  }, [connection, queryCode, resumeRoom, room, savedRoomOnLoad]);
+  }, [connection, queryCode, queryInviteToken, resumeRoom, room, savedRoomOnLoad]);
 
   useEffect(() => {
     if (room?.code && location.pathname !== '/game/private') {
@@ -875,13 +898,16 @@ function GameExperience() {
 
   useEffect(() => {
     if (room || !queryCode || connection !== 'idle') return;
-    if (location.pathname === '/' && savedRoomOnLoad?.code !== queryCode) {
-      navigate(`/room?room=${queryCode}`, { replace: true });
+    const inviteFragment = queryInviteToken ? `#invite=${encodeURIComponent(queryInviteToken)}` : '';
+    const openingInvite = isValidInviteToken(queryInviteToken);
+    const resumeFailed = Boolean(roomError && connection === 'idle' && resumedCodeRef.current === queryCode);
+    if (location.pathname === '/' && (savedRoomOnLoad?.code !== queryCode || openingInvite || resumeFailed)) {
+      navigate(`/room?room=${queryCode}${inviteFragment}`, { replace: true });
     }
-    if (location.pathname === '/game/private' && savedRoomOnLoad?.code !== queryCode) {
-      navigate(`/room?room=${queryCode}`, { replace: true });
+    if (location.pathname === '/game/private' && (savedRoomOnLoad?.code !== queryCode || openingInvite || resumeFailed)) {
+      navigate(`/room?room=${queryCode}${inviteFragment}`, { replace: true });
     }
-  }, [connection, location.pathname, navigate, queryCode, room, savedRoomOnLoad]);
+  }, [connection, location.pathname, navigate, queryCode, queryInviteToken, room, roomError, savedRoomOnLoad]);
 
   useEffect(() => {
     if (room || location.pathname !== '/game/private' || queryCode || connection !== 'idle') return;
@@ -903,6 +929,11 @@ function GameExperience() {
   }, []);
 
   const recordGameResult = useCallback((mode, outcome) => {
+    if (mode !== 'bot' && mode !== 'local') return;
+    setSeriesScores((scores) => outcome.draw
+      ? { ...scores, draws: scores.draws + 1 }
+      : { ...scores, [outcome.winner]: scores[outcome.winner] + 1 });
+
     if (mode === 'bot') {
       setBotStats((stats) => {
         const key = outcome.draw ? 'draws' : outcome.winner === selectedMark ? 'wins' : 'losses';
@@ -977,6 +1008,7 @@ function GameExperience() {
   function beginMatch(mode) {
     clearAutoComplete();
     setAnnouncement('');
+    setSeriesScores({ X: 0, O: 0, draws: 0 });
     setLocalStarter('X');
     setLocalRound(1);
     setGame(EMPTY_GAME('X'));
@@ -1002,6 +1034,7 @@ function GameExperience() {
     if (room || location.pathname === '/room' || location.pathname === '/game/private') leaveRoom();
     clearAutoComplete();
     setAnnouncement('');
+    setSeriesScores({ X: 0, O: 0, draws: 0 });
     setGame(EMPTY_GAME('X'));
     setLocalRound(1);
     setLocalStarter('X');
@@ -1009,10 +1042,12 @@ function GameExperience() {
   }
 
   async function copyInvite() {
-    if (!room?.code) return;
-    const inviteUrl = `${window.location.origin}/?room=${room.code}`;
+    if (!room?.code || !isValidInviteToken(inviteToken)) return;
+    const inviteUrl = new URL('/', window.location.origin);
+    inviteUrl.searchParams.set('room', room.code);
+    inviteUrl.hash = `invite=${inviteToken}`;
     try {
-      await navigator.clipboard.writeText(inviteUrl);
+      await navigator.clipboard.writeText(inviteUrl.toString());
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1_800);
     } catch {
@@ -1023,6 +1058,12 @@ function GameExperience() {
   function clearRecords(mode) {
     if (mode === 'bot') setBotStats({ wins: 0, losses: 0, draws: 0 });
     else setLocalStats({ player1: 0, player2: 0, draws: 0 });
+    clearAutoComplete();
+    setAnnouncement('');
+    setSeriesScores({ X: 0, O: 0, draws: 0 });
+    setLocalStarter('X');
+    setLocalRound(1);
+    setGame(EMPTY_GAME('X'));
     setShowClearRecords(false);
   }
 
@@ -1045,9 +1086,11 @@ function GameExperience() {
     playerTwoName,
     botStats,
     localStats,
+    seriesScores,
     autoCompleting,
     announcement,
     copied,
+    inviteToken,
     copyInvite,
     onClearRecords: () => setShowClearRecords(true),
   };
@@ -1056,18 +1099,17 @@ function GameExperience() {
 
   return (
     <div className="app-shell">
-      <SiteHeader onHome={handleHome} onRules={() => setShowRules(true)} room={room} connection={connection} />
+      <SiteHeader onHome={handleHome} room={room} connection={connection} />
       <Routes>
         <Route path="/" element={<ModeSelectionPage />} />
         <Route path="/setup/:mode" element={<SetupRoute selectedMark={selectedMark} setSelectedMark={setSelectedMark} playerOneName={playerOneName} setPlayerOneName={setPlayerOneName} playerTwoName={playerTwoName} setPlayerTwoName={setPlayerTwoName} onStart={beginMatch} />} />
-        <Route path="/room" element={<RoomEntryPage playerName={playerName} setPlayerName={setPlayerName} joinCode={joinCode} setJoinCode={setJoinCode} createRoom={createRoom} joinRoom={joinRoom} actionPending={actionPending} connection={connection} roomError={roomError} clearRoomError={clearRoomError} hasInvite={Boolean(queryCode)} />} />
+        <Route path="/room" element={<RoomEntryPage playerName={playerName} setPlayerName={setPlayerName} joinCode={joinCode} setJoinCode={setJoinCode} joinSecret={joinSecret} setJoinSecret={setJoinSecret} createRoom={createRoom} joinRoom={joinRoom} actionPending={actionPending} connection={connection} roomError={roomError} clearRoomError={clearRoomError} hasInvite={Boolean(queryCode && isValidInviteToken(queryInviteToken))} />} />
         <Route path="/game/:mode" element={<GameRoute room={room} connection={connection} roomError={roomError} clearRoomError={clearRoomError} yourMark={yourMark} send={send} onHome={goHome} gameProps={gameProps} />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <PageFooter />
-      {showRules && <RulesDialog onClose={() => setShowRules(false)} />}
       {showClearRecords && (
-        <ConfirmDialog title="Clear your scorecard?" detail="This clears the saved record for the current mode on this device. Your current room and board are unchanged." confirmLabel="Clear scorecard" onCancel={() => setShowClearRecords(false)} onConfirm={() => clearRecords(location.pathname.includes('/bot') ? 'bot' : 'local')} />
+        <ConfirmDialog title="Reset this match?" detail="This clears the saved all-time record for this mode and starts the current match again at round one with a 0–0 score." confirmLabel="Reset match & record" onCancel={() => setShowClearRecords(false)} onConfirm={() => clearRecords(location.pathname.includes('/bot') ? 'bot' : 'local')} />
       )}
     </div>
   );

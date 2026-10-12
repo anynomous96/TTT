@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { randomInt, randomUUID } from 'node:crypto';
+import { randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,10 +11,31 @@ const distDirectory = resolve(here, '../dist');
 const port = Number(process.env.PORT) || 3001;
 const rooms = new Map();
 const ROOM_CODE_CHARACTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const MAX_ACTIVE_ROOMS = 500;
+const MAX_WEBSOCKET_CLIENTS = 250;
+const INVITE_TOKEN_LENGTH = 22;
+const ROOM_ACTION_WINDOW_MS = 60_000;
+const MAX_ROOM_ACTIONS_PER_WINDOW = 8;
+const MESSAGE_WINDOW_MS = 10_000;
+const MAX_MESSAGES_PER_WINDOW = 60;
 const MAX_CHAT_LENGTH = 300;
 const MAX_CHAT_MESSAGES = 60;
 const CHAT_WINDOW_MS = 10_000;
 const MAX_CHAT_PER_WINDOW = 8;
+const INVALID_INVITE_MESSAGE = 'Invalid secure invite. Check the link or both invite values.';
+
+const SECURITY_HEADERS = {
+  'content-security-policy': "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:",
+  'cross-origin-opener-policy': 'same-origin',
+  'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+  'referrer-policy': 'no-referrer',
+  'x-content-type-options': 'nosniff',
+  'x-frame-options': 'DENY',
+};
+
+function withSecurityHeaders(headers = {}) {
+  return { ...SECURITY_HEADERS, ...headers };
+}
 
 const contentTypes = {
   '.css': 'text/css; charset=utf-8',
@@ -53,7 +74,58 @@ function cleanName(value) {
 
 function cleanToken(value) {
   if (typeof value !== 'string') return '';
-  return value.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80);
+  const token = value.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80);
+  return /^[a-zA-Z0-9_-]{32,80}$/.test(token) ? token : '';
+}
+
+function cleanInviteToken(value) {
+  if (typeof value !== 'string') return '';
+  const token = value.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, INVITE_TOKEN_LENGTH);
+  return new RegExp(`^[a-zA-Z0-9_-]{${INVITE_TOKEN_LENGTH}}$`).test(token) ? token : '';
+}
+
+function inviteMatches(candidate, expected) {
+  if (!candidate || !expected) return false;
+  const candidateBuffer = Buffer.from(candidate, 'utf8');
+  const expectedBuffer = Buffer.from(expected, 'utf8');
+  return candidateBuffer.length === expectedBuffer.length && timingSafeEqual(candidateBuffer, expectedBuffer);
+}
+
+function consumeRateLimit(socket, bucket, limit, windowMs) {
+  const now = Date.now();
+  const active = (socket.rateLimits?.[bucket] || []).filter((timestamp) => now - timestamp < windowMs);
+  if (active.length >= limit) {
+    socket.rateLimits ||= {};
+    socket.rateLimits[bucket] = active;
+    return false;
+  }
+  active.push(now);
+  socket.rateLimits ||= {};
+  socket.rateLimits[bucket] = active;
+  return true;
+}
+
+function isAllowedOrigin(origin, request) {
+  if (typeof origin !== 'string' || !origin) return false;
+  let parsedOrigin;
+  try {
+    parsedOrigin = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (!['http:', 'https:'].includes(parsedOrigin.protocol)) return false;
+
+  const requestHost = request.headers.host;
+  if (requestHost && parsedOrigin.host.toLowerCase() === requestHost.toLowerCase()) return true;
+
+  const configuredOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map((value) => value.trim()).filter(Boolean);
+  return configuredOrigins.some((allowed) => {
+    try {
+      return new URL(allowed).origin === parsedOrigin.origin;
+    } catch {
+      return false;
+    }
+  });
 }
 
 function cleanRoomCode(value) {
@@ -67,6 +139,10 @@ function makeRoomCode() {
     code = Array.from({ length: 6 }, () => ROOM_CODE_CHARACTERS[randomInt(ROOM_CODE_CHARACTERS.length)]).join('');
   } while (rooms.has(code));
   return code;
+}
+
+function makeInviteToken() {
+  return randomBytes(16).toString('base64url');
 }
 
 function publicRoom(room) {
@@ -93,7 +169,7 @@ function sendRoomState(room) {
   for (const mark of ['X', 'O']) {
     const player = room.players[mark];
     if (player?.socket && player.socket.readyState === WebSocket.OPEN) {
-      send(player.socket, { type: 'room_state', room: state, yourMark: mark });
+      send(player.socket, { type: 'room_state', room: state, yourMark: mark, inviteToken: room.inviteToken });
     }
   }
 }
@@ -117,7 +193,6 @@ function attachPlayer(socket, room, mark, token, name) {
   };
   socket.roomCode = room.code;
   socket.role = mark;
-  socket.playerToken = token;
   socket.chatTimes = [];
   room.lastActivity = Date.now();
 
@@ -130,10 +205,16 @@ function attachPlayer(socket, room, mark, token, name) {
 function createRoom(socket, payload) {
   const token = cleanToken(payload.token);
   if (!token) return sendError(socket, 'Please refresh the page and try again.');
+  if (getRoomForSocket(socket)) return sendError(socket, 'Leave your current room before creating another.');
+  if (!consumeRateLimit(socket, 'create', MAX_ROOM_ACTIONS_PER_WINDOW, ROOM_ACTION_WINDOW_MS)) {
+    return sendError(socket, 'Too many room actions. Please wait a minute and try again.');
+  }
+  if (rooms.size >= MAX_ACTIVE_ROOMS) return sendError(socket, 'The room service is full right now. Please try again later.');
 
   const code = makeRoomCode();
   const room = {
     code,
+    inviteToken: makeInviteToken(),
     board: Array(9).fill(null),
     turn: 'X',
     status: 'waiting',
@@ -154,18 +235,28 @@ function createRoom(socket, payload) {
 function joinRoom(socket, payload, isResume = false) {
   const code = cleanRoomCode(payload.code);
   const token = cleanToken(payload.token);
-  const room = rooms.get(code);
-  if (!room) return sendError(socket, 'That room could not be found. Check the code and try again.');
   if (!token) return sendError(socket, 'Please refresh the page and try again.');
-
-  let mark = ['X', 'O'].find((candidate) => room.players[candidate]?.token === token);
-  if (isResume && !mark) {
-    return sendError(socket, 'This browser is not a member of that room. Rejoin with the room code.');
+  if (getRoomForSocket(socket)) return sendError(socket, 'This connection is already in a room.');
+  if (!isResume && !consumeRateLimit(socket, 'join', MAX_ROOM_ACTIONS_PER_WINDOW, ROOM_ACTION_WINDOW_MS)) {
+    return sendError(socket, 'Too many room attempts. Please wait a minute and try again.');
   }
 
-  if (!mark) {
-    if (room.players.O) return sendError(socket, 'This room already has two players. Ask the host for a new room.');
-    mark = 'O';
+  const room = rooms.get(code);
+  let mark;
+  if (isResume) {
+    if (!room) return sendError(socket, 'This saved room is no longer available.');
+    mark = ['X', 'O'].find((candidate) => room.players[candidate]?.token === token);
+    if (!mark) return sendError(socket, 'This browser is not a member of that room.');
+  } else {
+    const providedInvite = cleanInviteToken(payload.inviteToken);
+    if (code.length !== 6 || !room || !inviteMatches(providedInvite, room.inviteToken)) {
+      return sendError(socket, INVALID_INVITE_MESSAGE);
+    }
+    mark = ['X', 'O'].find((candidate) => room.players[candidate]?.token === token);
+    if (!mark) {
+      if (room.players.O) return sendError(socket, 'This room already has two players. Ask the host for a new invite.');
+      mark = 'O';
+    }
   }
 
   attachPlayer(socket, room, mark, token, payload.name);
@@ -233,6 +324,9 @@ function voteForNextRound(socket) {
 function postChat(socket, payload) {
   const room = getRoomForSocket(socket);
   if (!room) return sendError(socket, 'Join a private room to chat.');
+  if (room.status === 'waiting' || !room.players.X || !room.players.O) {
+    return sendError(socket, 'Room chat opens when the second player joins.');
+  }
   const text = typeof payload.text === 'string'
     ? payload.text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim().slice(0, MAX_CHAT_LENGTH)
     : '';
@@ -258,6 +352,10 @@ function postChat(socket, payload) {
 }
 
 function handleMessage(socket, raw) {
+  if (!consumeRateLimit(socket, 'messages', MAX_MESSAGES_PER_WINDOW, MESSAGE_WINDOW_MS)) {
+    socket.close(1008, 'Too many messages');
+    return;
+  }
   let payload;
   try {
     payload = JSON.parse(raw.toString());
@@ -291,15 +389,21 @@ function handleMessage(socket, raw) {
 }
 
 function serveStatic(request, response) {
+  if (!['GET', 'HEAD'].includes(request.method)) {
+    response.writeHead(405, withSecurityHeaders({ allow: 'GET, HEAD', 'content-type': 'text/plain; charset=utf-8' }));
+    response.end('Method not allowed');
+    return;
+  }
+
   if (request.url === '/healthz') {
-    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-    response.end(JSON.stringify({ ok: true, rooms: rooms.size }));
+    response.writeHead(200, withSecurityHeaders({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }));
+    response.end(JSON.stringify({ ok: true }));
     return;
   }
 
   if (!existsSync(join(distDirectory, 'index.html'))) {
-    response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
-    response.end('Threefold is ready. Run `npm run dev` for the development app or `npm run build` before `npm start`.');
+    response.writeHead(503, withSecurityHeaders({ 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }));
+    response.end('The app has not been built yet. Run `npm run build` before `npm start`.');
     return;
   }
 
@@ -307,7 +411,7 @@ function serveStatic(request, response) {
   try {
     pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
   } catch {
-    response.writeHead(400);
+    response.writeHead(400, withSecurityHeaders());
     response.end('Bad request');
     return;
   }
@@ -315,7 +419,7 @@ function serveStatic(request, response) {
   const safePath = normalize(pathname).replace(/^([.][.][/\\])+/, '');
   let filePath = resolve(distDirectory, `.${safePath}`);
   if (!filePath.startsWith(`${distDirectory}${sep}`) && filePath !== distDirectory) {
-    response.writeHead(403);
+    response.writeHead(403, withSecurityHeaders());
     response.end('Forbidden');
     return;
   }
@@ -325,24 +429,38 @@ function serveStatic(request, response) {
   try {
     const contents = readFileSync(filePath);
     const isHtml = extname(filePath) === '.html';
-    response.writeHead(200, {
+    response.writeHead(200, withSecurityHeaders({
       'content-type': contentTypes[extname(filePath)] || 'application/octet-stream',
       'cache-control': isHtml ? 'no-cache' : 'public, max-age=31536000, immutable',
-      'x-content-type-options': 'nosniff',
-    });
+    }));
     response.end(contents);
   } catch {
-    response.writeHead(500);
+    response.writeHead(500, withSecurityHeaders());
     response.end('Unable to load this file.');
   }
 }
 
 const server = createServer(serveStatic);
-const webSocketServer = new WebSocketServer({ server, path: '/ws', maxPayload: 16 * 1024 });
+server.headersTimeout = 10_000;
+server.requestTimeout = 20_000;
+server.keepAliveTimeout = 5_000;
+server.maxHeadersCount = 100;
+
+const webSocketServer = new WebSocketServer({
+  server,
+  path: '/ws',
+  maxPayload: 16 * 1024,
+  verifyClient: ({ origin, req }, done) => {
+    if (!isAllowedOrigin(origin, req)) return done(false, 403, 'Origin not allowed');
+    if (webSocketServer.clients.size >= MAX_WEBSOCKET_CLIENTS) return done(false, 503, 'Room service is busy');
+    return done(true);
+  },
+});
 
 webSocketServer.on('connection', (socket) => {
   socket.isAlive = true;
   socket.chatTimes = [];
+  socket.rateLimits = {};
   socket.on('pong', () => { socket.isAlive = true; });
   socket.on('message', (raw) => handleMessage(socket, raw));
   socket.on('error', (error) => console.error('WebSocket error:', error.message));

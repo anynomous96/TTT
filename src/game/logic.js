@@ -12,6 +12,8 @@ export const WINNING_LINES = Object.freeze([
 const MARKS = new Set(['X', 'O']);
 const MOVE_ORDER = [4, 0, 2, 6, 8, 1, 3, 5, 7];
 
+export const AUTO_COMPLETE_THRESHOLD = 3;
+
 export function otherMark(mark) {
   return mark === 'X' ? 'O' : 'X';
 }
@@ -29,13 +31,14 @@ export function getOutcome(board) {
 }
 
 /**
- * Returns the computer's optimal move. Minimax evaluates the full game tree,
- * so a perfect opponent can never lose; it wins when the other player makes
- * a mistake and otherwise forces a draw.
+ * Returns the computer's optimal move. Minimax searches the full game tree,
+ * so the computer never loses: it wins when offered a mistake and otherwise
+ * guarantees a draw.
  */
 export function getBestMove(board, aiMark) {
   if (!Array.isArray(board) || board.length !== 9 || !MARKS.has(aiMark)) return -1;
-  if (getOutcome(board).winner || getOutcome(board).draw) return -1;
+  const outcome = getOutcome(board);
+  if (outcome.winner || outcome.draw) return -1;
 
   let bestMove = -1;
   let bestScore = -Infinity;
@@ -54,6 +57,59 @@ export function getBestMove(board, aiMark) {
   }
 
   return bestMove;
+}
+
+/**
+ * True only when every legal continuation ends in a draw. This deliberately
+ * differs from a minimax draw: it will not skip a player's remaining moves if
+ * any legal sequence could still produce a winner.
+ */
+export function isInevitableDraw(board, nextMark) {
+  if (!Array.isArray(board) || board.length !== 9 || !MARKS.has(nextMark)) return false;
+  const position = [...board];
+  const memo = new Map();
+
+  function visit(turn) {
+    const outcome = getOutcome(position);
+    if (outcome.winner) return false;
+    if (outcome.draw) return true;
+
+    const key = `${position.map((mark) => mark || '-').join('')}:${turn}`;
+    if (memo.has(key)) return memo.get(key);
+
+    for (const index of MOVE_ORDER) {
+      if (position[index] !== null) continue;
+      position[index] = turn;
+      const continuationIsDraw = visit(otherMark(turn));
+      position[index] = null;
+      if (!continuationIsDraw) {
+        memo.set(key, false);
+        return false;
+      }
+    }
+
+    memo.set(key, true);
+    return true;
+  }
+
+  return visit(nextMark);
+}
+
+/** Get the remaining placements for an already unavoidable draw. */
+export function getDrawCompletionSequence(board, nextMark) {
+  if (!isInevitableDraw(board, nextMark)) return [];
+  const workingBoard = [...board];
+  const sequence = [];
+  let turn = nextMark;
+
+  for (const index of MOVE_ORDER) {
+    if (workingBoard[index] !== null) continue;
+    workingBoard[index] = turn;
+    sequence.push({ index, mark: turn });
+    turn = otherMark(turn);
+  }
+
+  return sequence;
 }
 
 function minimax(board, turn, aiMark, depth, alpha, beta) {

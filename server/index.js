@@ -79,6 +79,7 @@ function publicRoom(room) {
     winningLine: [...room.winningLine],
     round: room.round,
     scores: { ...room.scores },
+    nextRoundVotes: { ...room.nextRoundVotes },
     players: {
       X: room.players.X ? { name: room.players.X.name, online: room.players.X.online } : null,
       O: room.players.O ? { name: room.players.O.name, online: room.players.O.online } : null,
@@ -140,6 +141,7 @@ function createRoom(socket, payload) {
     winningLine: [],
     round: 1,
     scores: { X: 0, O: 0, draws: 0 },
+    nextRoundVotes: { X: false, O: false },
     players: { X: null, O: null },
     messages: [],
     lastActivity: Date.now(),
@@ -198,11 +200,23 @@ function playMove(socket, payload) {
   } else {
     room.turn = socket.role === 'X' ? 'O' : 'X';
   }
+  if (room.status === 'finished') room.nextRoundVotes = { X: false, O: false };
   room.lastActivity = Date.now();
   sendRoomState(room);
 }
 
-function startNextRound(socket) {
+function startNextRound(room) {
+  room.round += 1;
+  room.board = Array(9).fill(null);
+  room.winner = null;
+  room.winningLine = [];
+  room.turn = room.round % 2 === 0 ? 'O' : 'X';
+  room.status = 'playing';
+  room.nextRoundVotes = { X: false, O: false };
+  room.lastActivity = Date.now();
+}
+
+function voteForNextRound(socket) {
   const room = getRoomForSocket(socket);
   if (!room) return sendError(socket, 'Join a private room before starting another round.');
   if (room.status !== 'finished') return sendError(socket, 'Finish this round before starting the next one.');
@@ -210,13 +224,9 @@ function startNextRound(socket) {
     return sendError(socket, 'Both players need to be in the room before the next round can start.');
   }
 
-  room.round += 1;
-  room.board = Array(9).fill(null);
-  room.winner = null;
-  room.winningLine = [];
-  room.turn = room.round % 2 === 0 ? 'O' : 'X';
-  room.status = 'playing';
-  room.lastActivity = Date.now();
+  room.nextRoundVotes[socket.role] = !room.nextRoundVotes[socket.role];
+  if (room.nextRoundVotes.X && room.nextRoundVotes.O) startNextRound(room);
+  else room.lastActivity = Date.now();
   sendRoomState(room);
 }
 
@@ -269,8 +279,8 @@ function handleMessage(socket, raw) {
     case 'move':
       playMove(socket, payload);
       break;
-    case 'new_round':
-      startNextRound(socket);
+    case 'next_round_vote':
+      voteForNextRound(socket);
       break;
     case 'chat':
       postChat(socket, payload);
